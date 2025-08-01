@@ -42,6 +42,7 @@ def func_process_file(workspace_obj: FabricWorkspace, item_obj: Item, file_obj: 
         item_obj: The item object.
         file_obj: The file object.
     """
+
     if file_obj.name == "definition.pbir":
         definition_body = json.loads(file_obj.contents)
         if (
@@ -57,6 +58,7 @@ def func_process_file(workspace_obj: FabricWorkspace, item_obj: Item, file_obj: 
                 msg = "Semantic model not found in the repository. Cannot deploy a report with a relative path without deploying the model."
                 raise ItemDependencyError(msg, logger)
 
+            # Rewrite by path dataset referehce to by connection
             definition_body["datasetReference"] = {
                 "byConnection": {
                     "connectionString": None,
@@ -67,6 +69,26 @@ def func_process_file(workspace_obj: FabricWorkspace, item_obj: Item, file_obj: 
                     "connectionType": "pbiServiceXmlaStyleLive",
                 }
             }
-
+            return json.dumps(definition_body, indent=4) 
+        elif(
+            "datasetReference" in definition_body
+            and "byConnection" in definition_body["datasetReference"]
+            and item_obj.name in workspace_obj.config_notebook.report_parameters.keys()
+        ):
+            workspace_name = workspace_obj.config_notebook.report_parameters[item_obj.name][workspace_obj.environment].get("workspace")
+            semantic_model_name = workspace_obj.config_notebook.report_parameters[item_obj.name][workspace_obj.environment].get("semantic_model")
+            model_id = workspace_obj.config_notebook.report_parameters[item_obj.name][workspace_obj.environment].get("model_uid")
+            definition_body["datasetReference"] = {
+                "byConnection": {
+                    "connectionString": f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/{workspace_name};initial catalog={semantic_model_name};integrated security=ClaimsToken",
+                    "pbiServiceModelId": None,
+                    "pbiModelVirtualServerName": "sobe_wowvirtualserver",
+                    "pbiModelDatabaseName": f"{model_id}",
+                    "name": "EntityDataSource",
+                    "connectionType": "pbiServiceXmlaStyleLive",
+                }
+            }
             return json.dumps(definition_body, indent=4)
+            
+
     return file_obj.contents

@@ -34,7 +34,8 @@ class FabricWorkspace:
         environment: str = "N/A",
         workspace_id: Optional[str] = None,
         workspace_name: Optional[str] = None,
-        token_credential: TokenCredential = None,
+        token_credential: Optional[TokenCredential] = None,
+        config_notebook: Optional[object] = None,
         **kwargs,
     ) -> None:
         """
@@ -128,9 +129,6 @@ class FabricWorkspace:
         self.deployed_folders = {}
         self.deployed_items = {}
 
-        # Initialize dataflow dependencies dictionary (used in dataflow item processing)
-        self.dataflow_dependencies = {}
-
         # temporarily support base_api_url until deprecated
         if "base_api_url" in kwargs:
             logger.warning(
@@ -144,6 +142,8 @@ class FabricWorkspace:
 
         # Initialize dictionaries to store repository and deployed items
         self._refresh_parameter_file()
+
+        self.config_notebook = config_notebook
 
     def _resolve_workspace_id(self, workspace_name: str) -> str:
         """Resolve workspace ID based on the workspace name given."""
@@ -269,7 +269,6 @@ class FabricWorkspace:
             item_guid = item["id"]
             item_folder_id = item.get("folderId", "")
             sql_endpoint = ""
-            query_service_uri = ""
 
             # Add an empty dictionary if the item type hasn't been added yet
             if item_type not in self.deployed_items:
@@ -279,20 +278,16 @@ class FabricWorkspace:
                 self.workspace_items[item_type] = {}
 
             # Get additional properties based on item type
-            if item_type in ["Lakehouse", "Warehouse", "Eventhouse"]:
-                # Construct the endpoint URL and set the property path based on item type
-                endpoint_url = f"{self.base_api_url}/{item_type.lower()}s/{item_guid}"
-                response = self.endpoint.invoke(method="GET", url=endpoint_url)
+            if item_type == "Lakehouse":
+                lakehouse_response = self.endpoint.invoke(
+                    method="GET", url=f"{self.base_api_url}/lakehouses/{item_guid}"
+                )
                 # Use dpath.get for safe nested property access
-                property_path = constants.PROPERTY_PATH_MAPPING[item_type]
-                property_value = dpath.get(response, property_path, default="")
-                # Set the appropriate variable based on the last segment of the path
-                if not property_value:
-                    logger.debug(f"Failed to get endpoint for {item_type} '{item_name}'")
-                elif property_path.endswith("connectionString"):
-                    sql_endpoint = property_value
-                elif property_path.endswith("queryServiceUri"):
-                    query_service_uri = property_value
+                sql_endpoint = dpath.get(
+                    lakehouse_response, "body/properties/sqlEndpointProperties/connectionString", default=""
+                )
+                if not sql_endpoint:
+                    logger.debug(f"Failed to get SQL endpoint for Lakehouse '{item_name}'")
 
             # Add item details to the deployed_items dictionary
             self.deployed_items[item_type][item_name] = Item(
@@ -304,11 +299,7 @@ class FabricWorkspace:
             )
 
             # Add item details to the workspace_items dictionary required for parameterization (public-facing attributes)
-            self.workspace_items[item_type][item_name] = {
-                "id": item_guid,
-                "sqlendpoint": sql_endpoint,
-                "queryserviceuri": query_service_uri,
-            }
+            self.workspace_items[item_type][item_name] = {"id": item_guid, "sqlendpoint": sql_endpoint}
 
     def _replace_logical_ids(self, raw_file: str) -> str:
         """
@@ -375,9 +366,8 @@ class FabricWorkspace:
                 # Replace any found references with specified environment value if conditions are met
                 if find_value in raw_file and self.environment in replace_value_dict and filter_match:
                     replace_value = extract_replace_value(self, replace_value_dict[self.environment])
-                    if replace_value:
-                        raw_file = raw_file.replace(find_value, replace_value)
-                        logger.debug(f"Replacing '{find_value}' with '{replace_value}' in {item_name}.{item_type}")
+                    raw_file = raw_file.replace(find_value, replace_value)
+                    logger.debug(f"Replacing '{find_value}' with '{replace_value}' in {item_name}.{item_type}")
 
         return raw_file
 
