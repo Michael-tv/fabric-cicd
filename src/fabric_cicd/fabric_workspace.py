@@ -16,7 +16,7 @@ from azure.identity import DefaultAzureCredential
 
 from fabric_cicd import constants
 from fabric_cicd._common._check_utils import check_regex
-from fabric_cicd._common._exceptions import InputError, ParameterFileError, ParsingError
+from fabric_cicd._common._exceptions import FailedPublishedItemStatusError, InputError, ParameterFileError, ParsingError
 from fabric_cicd._common._fabric_endpoint import FabricEndpoint
 from fabric_cicd._common._item import Item
 from fabric_cicd._common._logging import print_header
@@ -30,7 +30,7 @@ class FabricWorkspace:
     def __init__(
         self,
         repository_directory: str,
-        item_type_in_scope: list[str],
+        item_type_in_scope: Optional[list[str]] = None,
         environment: str = "N/A",
         workspace_id: Optional[str] = None,
         workspace_name: Optional[str] = None,
@@ -45,7 +45,7 @@ class FabricWorkspace:
             workspace_id: The ID of the workspace to interact with. Either `workspace_id` or `workspace_name` must be provided. Considers only `workspace_id` if both are specified.
             workspace_name: The name of the workspace to interact with. Either `workspace_id` or `workspace_name` must be provided. Considers only `workspace_id` if both are specified.
             repository_directory: Local directory path of the repository where items are to be deployed from.
-            item_type_in_scope: Item types that should be deployed for a given workspace.
+            item_type_in_scope: Item types that should be deployed for a given workspace. If omitted, defaults to all available item types.
             environment: The environment to be used for parameterization.
             token_credential: The token credential to use for API requests.
             kwargs: Additional keyword arguments.
@@ -63,8 +63,7 @@ class FabricWorkspace:
             >>> from fabric_cicd import FabricWorkspace
             >>> workspace = FabricWorkspace(
             ...     workspace_name="your-workspace-name",
-            ...     repository_directory="/path/to/repo",
-            ...     item_type_in_scope=["Environment", "Notebook", "DataPipeline"]
+            ...     repository_directory="/path/to/repo"
             ... )
 
             With optional parameters
@@ -121,7 +120,12 @@ class FabricWorkspace:
 
         # Validate and set class variables
         self.repository_directory: Path = validate_repository_directory(repository_directory)
-        self.item_type_in_scope = validate_item_type_in_scope(item_type_in_scope, upn_auth=self.endpoint.upn_auth)
+
+        # Handle None case for item_type_in_scope by defaulting to all available item types
+        if item_type_in_scope is None:
+            self.item_type_in_scope = list(constants.ACCEPTED_ITEM_TYPES_UPN)
+        else:
+            self.item_type_in_scope = validate_item_type_in_scope(item_type_in_scope, upn_auth=self.endpoint.upn_auth)
         self.environment = validate_environment(environment)
         self.publish_item_name_exclude_regex = None
         self.repository_folders = {}
@@ -179,6 +183,7 @@ class FabricWorkspace:
         """Refreshes the repository_items dictionary by scanning the repository directory."""
         self.repository_items = {}
         empty_logical_id_paths = []  # Collect all paths with empty logical IDs
+        visited_logical_ids = set()  # Track visited logical IDs to avoid duplicates
 
         for root, _dirs, files in os.walk(self.repository_directory):
             directory = Path(root)
@@ -216,6 +221,12 @@ class FabricWorkspace:
                 if not item_logical_id or item_logical_id.strip() == "":
                     empty_logical_id_paths.append(str(item_metadata_path))
                     continue  # Skip processing this item further
+
+                if item_logical_id not in visited_logical_ids:
+                    visited_logical_ids.add(item_logical_id)
+                else:
+                    msg = f"Duplicate logicalId '{item_logical_id}' found in {item_metadata_path}"
+                    raise FailedPublishedItemStatusError(msg, logger)
 
                 item_path = directory
                 relative_path = f"/{directory.relative_to(self.repository_directory).as_posix()}"
@@ -334,6 +345,7 @@ class FabricWorkspace:
             extract_find_value,
             extract_parameter_filters,
             extract_replace_value,
+            process_environment_key,
             replace_key_value,
         )
 
@@ -351,7 +363,7 @@ class FabricWorkspace:
 
                 # Perform replacement if condition is met
                 if filter_match and ".json" in file_path.suffix:
-                    raw_file = replace_key_value(parameter_dict, raw_file, self.environment)
+                    raw_file = replace_key_value(self, parameter_dict, raw_file, self.environment)
 
         if "find_replace" in self.environment_parameter:
             for parameter_dict in self.environment_parameter.get("find_replace"):
@@ -361,7 +373,7 @@ class FabricWorkspace:
 
                 # Extract the find_value and replace_value_dict
                 find_value = extract_find_value(parameter_dict, raw_file, filter_match)
-                replace_value_dict = parameter_dict.get("replace_value", {})
+                replace_value_dict = process_environment_key(self, parameter_dict.get("replace_value", {}))
 
                 # Replace any found references with specified environment value if conditions are met
                 if find_value in raw_file and self.environment in replace_value_dict and filter_match:
@@ -416,9 +428,10 @@ class FabricWorkspace:
             item_type: Type of the item (e.g., Notebook, Environment).
             path: Full path of the desired item.
         """
-        for item_details in self.repository_items[item_type].values():
-            if item_details.path == Path(path):
-                return item_details.logical_id
+        if item_type in self.repository_items:
+            for item_details in self.repository_items[item_type].values():
+                if item_details.path == Path(path):
+                    return item_details.logical_id
         # if not found
         return None
 

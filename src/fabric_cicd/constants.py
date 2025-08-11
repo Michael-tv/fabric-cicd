@@ -4,7 +4,7 @@
 """Constants for the fabric-cicd package."""
 
 # General
-VERSION = "0.1.23"
+VERSION = "0.1.24"
 DEFAULT_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000"
 DEFAULT_API_ROOT_URL = "https://api.powerbi.com"
 FABRIC_API_ROOT_URL = "https://api.fabric.microsoft.com"
@@ -38,8 +38,8 @@ ACCEPTED_ITEM_TYPES_NON_UPN = ACCEPTED_ITEM_TYPES_UPN
 # Publish
 SHELL_ONLY_PUBLISH = ["Environment", "Lakehouse", "Warehouse", "SQLDatabase"]
 
-# Does not require assigned capacity
-NO_ASSIGNED_CAPACITY_REQUIRED = ["SemanticModel", "Report"]
+# Items that do not require assigned capacity
+NO_ASSIGNED_CAPACITY_REQUIRED = [["SemanticModel", "Report"], ["SemanticModel"], ["Report"]]
 
 # REGEX Constants
 VALID_GUID_REGEX = r"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
@@ -102,6 +102,8 @@ PARAMETER_MSGS = {
     "valid parameter": "{} parameter is valid",
     "skip": "The {} '{}' replacement will be skipped due to {} in parameter {}",
     "no target env": "target environment '{}' not found",
+    "all target env": "The replace value: '{}' will be applied for any target environment",
+    "other target env": "The '{}' environment key can only be used alone. Other environment keys found in replace_value: '{}'",
     "no filter match": "unmatched optional filters",
 }
 
